@@ -1,0 +1,24 @@
+{
+  "name": "spiral_square",
+  "description": "Single square, rotated and scaled about its own centroid each step so successive stages nest into a spiral. Used by scripts/run_in_rhino.py.",
+  "seed": {
+    "name": "A",
+    "size": 24.0
+  },
+  "steps": 10,
+  "rule": {
+    "target": "A",
+    "type": "rotate_scale_inplace",
+    "rotate_deg": 15.0,
+    "scale_factor": 0.88
+  },
+  "layout": {
+    "spiral_layer": "grammatric::spiral",
+    "grid_layer": "grammatric::grid",
+    "grid_cols": 4,
+    "grid_cell_w": 80.0,
+    "grid_cell_h": 60.0,
+    "grid_offset_x": 300.0
+  },
+  "note": "Not yet loaded automatically - cli.py has no recipe loader yet. This documents the parameters scripts/run_in_rhino.py currently hardcodes; keep the two in sync until a loader exists."
+}

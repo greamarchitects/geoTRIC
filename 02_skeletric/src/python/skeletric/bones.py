@@ -10,7 +10,7 @@ This is the stable input layer:
 - divide curves into point lists (Tuples/Lists are central)
 """
 
-import Rhinoscriptsyntax as rs
+import rhinoscriptsyntax as rs
 
 
 def get_bones(prompt="Select bone curves (lines/curves/polylines)", preselect=True):
@@ -24,12 +24,13 @@ def get_bones(prompt="Select bone curves (lines/curves/polylines)", preselect=Tr
 
 def make_rectangle_bone(width=10.0, height=6.0, origin=(0.0, 0.0, 0.0), closed=True):
     """
-    Creates a rectangle as a base 'bone' curve using rs.AddCurve().
-    Output is a curve id.
+    Creates a rectangle as a base 'bone' curve using rs.AddPolyline().
+    AddPolyline (not AddCurve) is deliberate: bones are straight linework,
+    and AddCurve would interpolate a smooth NURBS through the corners
+    instead of keeping them sharp. Output is a curve id.
     """
     ox, oy, oz = origin
     pts = [
-        (ox, oy, oz),
         (ox, oy, oz),
         (ox + width, oy, oz),
         (ox + width, oy + height, oz),
@@ -37,7 +38,7 @@ def make_rectangle_bone(width=10.0, height=6.0, origin=(0.0, 0.0, 0.0), closed=T
     ]
     if closed:
         pts.append(pts[0])  # close polyline
-    return rs.AddCurve(pts)
+    return rs.AddPolyline(pts)
 
 
 def curve_key_points(crv_id):

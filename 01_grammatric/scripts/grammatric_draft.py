@@ -19,14 +19,14 @@ import math
 # -----------------------------
 # CONFIG (keep small + editable)
 # -----------------------------
-STEPS = 10                 # number of derivation stages
-CELL_W = 70.0              # grid cell width
-CELL_H = 55.0              # grid cell height
-COLS = 5                   # grid columns for layout
+STEPS = 40                 # number of derivation stages
+CELL_W = 280.0              # grid cell width
+CELL_H = 220.0              # grid cell height
+COLS = 20                   # grid columns for layout
 BASE_LAYER = "grammatric_draft"
 
 # rule parameters (simple + deterministic)
-ROT_STEP_DEG = 12.0
+ROT_STEP_DEG = 48.0
 SCALE_FACTOR = 0.92
 MOVE_LOCAL = (14.0, 6.0, 0.0)   # local translation applied each step
 
@@ -92,7 +92,7 @@ def rule_rotate_scale_translate(obj_id, step_i):
 
     rs.RotateObject(new_id, c, ROT_STEP_DEG * (step_i + 1))
     s = SCALE_FACTOR ** (step_i + 1)
-    rs.ScaleObject(new_id, c, (s, s, 1.0))
+    rs.ScaleObject(new_id, c, (s, s, 10.0))
     rs.MoveObject(new_id, MOVE_LOCAL)
 
     return new_id
@@ -126,7 +126,7 @@ def main():
     ensure_layer(BASE_LAYER)
 
     # Seed (input)
-    seed = square(center=(0, 0, 0), size=22.0)
+    seed = square(center=(0, 0, 0), size=44.0)
 
     # Keep track of current “active” objects (grammar state)
     current = [seed]
