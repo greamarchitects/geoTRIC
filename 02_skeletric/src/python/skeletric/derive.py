@@ -11,7 +11,7 @@ This is the "complex form" layer:
 Keep everything as 2D linework by forcing Z=0.
 """
 
-import Rhinoscriptsyntax as rs
+import rhinoscriptsyntax as rs
 
 
 def force_z0(points):
@@ -21,13 +21,15 @@ def force_z0(points):
 
 def polyline(points, closed=False):
     """
-    Create a curve through a list of points using rs.AddCurve().
+    Create a curve through a list of points using rs.AddPolyline().
+    AddPolyline (not AddCurve) keeps the segments straight - this stays
+    2D linework rather than a smooth NURBS interpolation.
     If closed, repeats first point at the end.
     """
     pts = force_z0(points)
     if closed and pts:
         pts = pts + [pts[0]]
-    return rs.AddCurve(pts)
+    return rs.AddPolyline(pts)
 
 
 def ribs_along_spine(spine_points, rib_len=2.0, every=2):
@@ -110,6 +112,44 @@ def circles_on_points(points, radius=0.5, every=3):
     circles = []
     for i in range(0, len(pts), every):
         circles.append(rs.AddCircle(pts[i], radius))
+    return circles
+
+
+def _distance_xy(a, b):
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def attractor_radius(point, attractor, base_radius=0.5, max_radius=2.0, falloff_dist=10.0):
+    """
+    Radius for a single point under one attractor's pull:
+    - at the attractor itself (distance 0) -> max_radius
+    - eases back down to base_radius as distance approaches falloff_dist
+    - at/beyond falloff_dist -> base_radius (no further shrink)
+
+    The ease is smoothstep (3t^2 - 2t^3), so the change is gradual - no
+    sharp edge at falloff_dist - rather than a hard cutoff.
+    """
+    if falloff_dist <= 0:
+        return base_radius
+    t = min(max(_distance_xy(point, attractor) / falloff_dist, 0.0), 1.0)
+    ease = t * t * (3.0 - 2.0 * t)  # 0 at the attractor, 1 at/after falloff_dist
+    factor = 1.0 - ease
+    return base_radius + (max_radius - base_radius) * factor
+
+
+def circles_on_points_attractor(points, attractor, base_radius=0.5, max_radius=2.0,
+                                 falloff_dist=10.0, every=3):
+    """
+    Like circles_on_points(), but each circle's radius is pulled toward
+    max_radius near `attractor` (a single point) and eases back down to
+    base_radius by falloff_dist away from it. Uses rs.AddCircle().
+    """
+    pts = force_z0(points)
+    att = force_z0([attractor])[0]
+    circles = []
+    for i in range(0, len(pts), every):
+        r = attractor_radius(pts[i], att, base_radius, max_radius, falloff_dist)
+        circles.append(rs.AddCircle(pts[i], r))
     return circles
 
 
