@@ -14,7 +14,8 @@ logic.
 
 ## Where this sits in the series
 
-Third step after [grammatric](../01_grammatric) and [skeletric](../02_skeletric):
+Third step after [grammatric](../01_grammatric) and [skeletric](../02_skeletric),
+followed by [mattric](../04_mattric):
 
 - **grammatric** — a single symbol, evolved through named *rules* applied
   in discrete *derivation* steps (one lineage, staged over time).
@@ -25,13 +26,18 @@ Third step after [grammatric](../01_grammatric) and [skeletric](../02_skeletric)
   *dictionary* rather than one symbol or one curve, each free to vary
   independently under shared rules (a field, varied over both space and
   state).
+- **mattric** — pattric's dictionary-indexed matrix pushed into a third
+  dimension: columns/rows of 3D points become NURBS profile curves, which
+  are lofted or swept into a wall surface (a field, built up into surface
+  geometry instead of stopping at 2D linework).
 
 The attractor-weighting idea from skeletric (`derive.attractor_radius`)
 and the rule/step idea from grammatric (`rules.py` / `derivation.py`) are
 both reusable here per-cell: a rule can read a cell's grid position, look
 up its neighbors in the dictionary, and conditionally move/scale/rotate/
 randomize it — including attractor-style falloff against one or more
-field points.
+field points. mattric reuses the same per-cell attractor-falloff idea
+again, one dimension up.
 
 ------------------------------------------------------------------------
 
