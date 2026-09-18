@@ -60,36 +60,64 @@ def cell_corners(cell: Cell, cell_size: float) -> List[Tuple[float, float, float
     return corners
 
 
-def ensure_layer(path: str) -> str:
-    """Create a (possibly nested, 'A::B::C') layer path if missing. Live only."""
+def ensure_layer(path: str, color: Optional[Tuple[int, int, int]] = None) -> str:
+    """
+    Create a (possibly nested, 'A::B::C') layer path if missing, and set its
+    color if given (every call, so re-running the script after a color
+    tweak still picks it up - distinct colors are how overlapping base/
+    transformed layers stay tellable apart). Live only.
+    """
     _require_live()
-    if rs.IsLayer(path):
-        return path
-    parts = path.split("::")
-    current = parts[0]
-    if not rs.IsLayer(current):
-        rs.AddLayer(current)
-    for part in parts[1:]:
-        nxt = f"{current}::{part}"
-        if not rs.IsLayer(nxt):
-            rs.AddLayer(part, parent=current)
-        current = nxt
+    if not rs.IsLayer(path):
+        parts = path.split("::")
+        current = parts[0]
+        if not rs.IsLayer(current):
+            rs.AddLayer(current)
+        for part in parts[1:]:
+            nxt = f"{current}::{part}"
+            if not rs.IsLayer(nxt):
+                rs.AddLayer(part, parent=current)
+            current = nxt
+    if color is not None:
+        rs.LayerColor(path, color)
     return path
 
 
-def draw_matrix_live(matrix: Matrix, cell_size: float = 8.0,
-                      layer: str = "pattric", zoom: bool = True) -> List:
+def draw_matrix_live(matrix: Matrix, cell_size: float = 8.0, layer: str = "pattric",
+                      zoom: bool = True, color: Optional[Tuple[int, int, int]] = None) -> List:
     """
     Draw every cell in `matrix` as a closed square outline (straight
     segments via rs.AddPolyline, not a smooth AddCurve) into Rhino.
     Returns the created object ids.
     """
     _require_live()
-    ensure_layer(layer)
+    ensure_layer(layer, color)
     ids = []
     for key in sorted(matrix.keys()):
         pts = cell_corners(matrix[key], cell_size)
         guid = rs.AddPolyline(pts)
+        if guid:
+            rs.ObjectLayer(guid, layer)
+            ids.append(guid)
+    if zoom:
+        rs.ZoomExtents()
+    return ids
+
+
+def draw_markers_live(points: List[Tuple[float, float, float]], radius: float = 1.5,
+                       layer: str = "pattric::attractors", zoom: bool = False,
+                       color: Optional[Tuple[int, int, int]] = None) -> List:
+    """
+    Draw each point as a small circle (2D linework, not an rs.AddPoint dot -
+    so it survives the same Letter/Landscape line-weight print path as the
+    matrix cells) into Rhino. Used to mark attractor positions on their own
+    layer. Returns the created object ids.
+    """
+    _require_live()
+    ensure_layer(layer, color)
+    ids = []
+    for pt in points:
+        guid = rs.AddCircle(pt, radius)
         if guid:
             rs.ObjectLayer(guid, layer)
             ids.append(guid)

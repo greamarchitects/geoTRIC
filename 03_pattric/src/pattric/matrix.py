@@ -37,6 +37,17 @@ def _cell_seed(col: int, row: int, seed: int = 0) -> float:
     return (h & 0xFFFFFFFF) / 0xFFFFFFFF
 
 
+def spacing_for_gap(cell_size: float, gap: float) -> float:
+    """
+    Center-to-center grid `spacing` that leaves exactly `gap` world units
+    between two adjacent *base* squares' edges - base meaning build_matrix's
+    own untransformed cell (scale=1, rotation=0, offset=(0, 0)), each
+    cell_size x cell_size. Two such squares, centers `spacing` apart, sit
+    edge-to-edge with gap = spacing - cell_size, so spacing = cell_size + gap.
+    """
+    return cell_size + gap
+
+
 def build_matrix(cols: int, rows: int, spacing: float = 10.0,
                   origin: Point3D = (0.0, 0.0, 0.0), seed: int = 0) -> Matrix:
     """Build a cols x rows point matrix dictionary on a regular grid."""

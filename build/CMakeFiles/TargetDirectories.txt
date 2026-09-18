@@ -1,0 +1,2 @@
+C:/Users/ReDI/Documents/GitHub/2026_GREAM/project/local_geoTRIC/geoTRIC/build/CMakeFiles/edit_cache.dir
+C:/Users/ReDI/Documents/GitHub/2026_GREAM/project/local_geoTRIC/geoTRIC/build/CMakeFiles/rebuild_cache.dir
