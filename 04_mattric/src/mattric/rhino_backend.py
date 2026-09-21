@@ -18,8 +18,11 @@ from .matrix import Cell, Matrix, column_keys, row_keys
 
 try:
     import rhinoscriptsyntax as rs  # only importable from inside Rhino
+    import scriptcontext as sc
+    import Rhino
+    import System
 except ImportError:
-    rs = None
+    rs = sc = Rhino = System = None
 
 
 def is_live() -> bool:
@@ -105,19 +108,128 @@ def draw_course_curves_live(matrix: Matrix, rows: int, layer: str = "mattric::co
 
 
 def loft_wall_live(curve_ids: List, layer: str = "mattric::wall",
-                    color: Optional[Tuple[int, int, int]] = None) -> List:
+                    color: Optional[Tuple[int, int, int]] = None,
+                    loft_type: str = "Tight", closed: bool = False) -> List:
     """
-    Loft the given curves (in order - typically draw_profile_curves_live's
-    output) into one wall surface. Swap for rs.AddSweep2(rails, shapes) if
-    a two-rail sweep (e.g. bottom/top course as rails, profiles as shapes)
-    reads better for a given wall shape than a straight loft.
+    Python (RhinoCommon) port of the C++ CArgsRhinoLoft / RhinoSdkLoftSurface
+    sample: loft the given curves (in order - typically
+    draw_profile_curves_live's output) into one wall.
+
+    Mapping from the C++ sample:
+      m_loft_type = ltTight             -> LoftType.Tight (`loft_type` names any LoftType member)
+      m_bClosed                         -> `closed`
+      m_bUseStartpoint/Endpoint = FALSE -> Point3d.Unset start/end
+      m_simplify_method = lsNone        -> plain Brep.CreateFromLoft (no rebuild/refit)
+      RemoveShortSegments(...)          -> Curve.RemoveShortSegments(tolerance) on a duplicate
+      RhinoJoinBreps(...)               -> Brep.JoinBreps(...)
+      doc.AddBrepObject / Redraw        -> sc.doc.Objects.AddBrep / Views.Redraw
+
+    Like the C++ sample, this does no curve sorting or direction matching -
+    curves must already be in loft order and point the same way, which
+    draw_profile_curves_live's column-by-column, bottom-to-top output is.
     """
     _require_live()
     ensure_layer(layer, color)
-    surfaces = rs.AddLoft(curve_ids, loft_type=0) or []
-    for guid in surfaces:
-        rs.ObjectLayer(guid, layer)
-    return surfaces
+    tolerance = sc.doc.ModelAbsoluteTolerance
+
+    curves = []
+    for curve_id in curve_ids:
+        source = rs.coercecurve(curve_id)
+        if source is None:
+            continue
+        curve = source.DuplicateCurve()
+        curve.RemoveShortSegments(tolerance)
+        curves.append(curve)
+    if len(curves) < 2:
+        return []
+
+    unset = Rhino.Geometry.Point3d.Unset
+    breps = Rhino.Geometry.Brep.CreateFromLoft(
+        curves, unset, unset, getattr(Rhino.Geometry.LoftType, loft_type), closed)
+    if not breps:
+        return []
+
+    if len(breps) > 1:
+        joined = Rhino.Geometry.Brep.JoinBreps(breps, tolerance)
+        if joined:
+            breps = joined
+
+    ids = []
+    for brep in breps:
+        guid = sc.doc.Objects.AddBrep(brep)
+        if guid != System.Guid.Empty:
+            rs.ObjectLayer(guid, layer)
+            ids.append(guid)
+    sc.doc.Views.Redraw()
+    return ids
+
+
+def clamped_uniform_knots(cv_count: int, degree: int) -> List[float]:
+    """
+    Clamped uniform knot vector WITHOUT the 2 superfluous end knots
+    (length cv_count + degree - 1) - the convention both ON_NurbsSurface in
+    the C++ sample and RhinoCommon's NurbsSurface.KnotsU/KnotsV use. Pure
+    function - no Rhino. e.g. (3 cvs, degree 2) -> [0, 0, 1, 1]; (5 cvs,
+    degree 3) -> [0, 0, 0, 1, 2, 2, 2].
+    """
+    interior = cv_count - degree - 1
+    return ([0.0] * degree
+            + [float(i) for i in range(1, interior + 1)]
+            + [float(interior + 1)] * degree)
+
+
+def matrix_point_grid(matrix: Matrix, cols: int, rows: int) -> List[List[Tuple[float, float, float]]]:
+    """Matrix -> grid[col][row] of drawn points (origin + offset) - the
+    control-point net nurbs_surface_live takes. Pure function - no Rhino."""
+    return [[cell_point(matrix[(col, row)]) for row in range(rows)] for col in range(cols)]
+
+
+def nurbs_surface_live(point_grid: List[List[Tuple[float, float, float]]],
+                        u_degree: int = 2, v_degree: int = 3,
+                        layer: str = "mattric::cv_wall",
+                        color: Optional[Tuple[int, int, int]] = None) -> Optional[object]:
+    """
+    Python (RhinoCommon) port of the C++ CreateSurfacesExample: build a
+    non-rational NURBS surface directly from a control-point net
+    (`point_grid[i][j]`, i along u, j along v), instead of lofting through
+    curves - here the matrix's own points ARE the control net, so the
+    surface is *pulled toward* them (like a control-point surface) rather
+    than passing through them (like the loft).
+
+    Mapping from the C++ sample:
+      ON_NurbsSurface(dim, bIsRational, u_degree+1, v_degree+1, u_cv, v_cv)
+                                       -> NurbsSurface.Create(3, False, u_degree+1, v_degree+1, u_cv, v_cv)
+      SetKnot(0/1, i, ...)             -> surface.KnotsU[i] / KnotsV[j] = ... (clamped_uniform_knots)
+      SetCV(i, j, point)               -> surface.Points.SetPoint(i, j, Point3d)
+      IsValid() then AddSurfaceObject  -> surface.IsValid then sc.doc.Objects.AddSurface
+    Degrees are reduced automatically if the net is too small for them
+    (a degree needs at least degree+1 control points). Returns the new
+    object id, or None if the surface wasn't valid.
+    """
+    _require_live()
+    ensure_layer(layer, color)
+    u_cv, v_cv = len(point_grid), len(point_grid[0])
+    u_degree = min(u_degree, u_cv - 1)
+    v_degree = min(v_degree, v_cv - 1)
+
+    surface = Rhino.Geometry.NurbsSurface.Create(3, False, u_degree + 1, v_degree + 1, u_cv, v_cv)
+    for i, knot in enumerate(clamped_uniform_knots(u_cv, u_degree)):
+        surface.KnotsU[i] = knot
+    for j, knot in enumerate(clamped_uniform_knots(v_cv, v_degree)):
+        surface.KnotsV[j] = knot
+    for i in range(u_cv):
+        for j in range(v_cv):
+            x, y, z = point_grid[i][j]
+            surface.Points.SetPoint(i, j, Rhino.Geometry.Point3d(x, y, z))
+
+    if not surface.IsValid:
+        return None
+    guid = sc.doc.Objects.AddSurface(surface)
+    if guid == System.Guid.Empty:
+        return None
+    rs.ObjectLayer(guid, layer)
+    sc.doc.Views.Redraw()
+    return guid
 
 
 def draw_markers_live(points: List[Tuple[float, float, float]], radius: float = 1.5,

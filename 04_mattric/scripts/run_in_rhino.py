@@ -62,10 +62,21 @@ ATTRACTOR_MARKER_RADIUS = 1.2
 MAX_BULGE = 8.0       # world-unit depth (y) push at/near an attractor
 FALLOFF_CELLS = 3.0   # grid-cell radius of each attractor's influence
 
+LOFT_TYPE = "Tight"   # any Rhino.Geometry.LoftType member: Normal, Loose, Straight, Tight, ...
+
+# Optional second wall: a NURBS surface built straight from the matrix's
+# control-point net (port of the C++ CreateSurfacesExample) instead of
+# lofted through the profile curves. It is pulled toward the points rather
+# than passing through them, so it overlaps the lofted wall - leave off
+# unless comparing the two.
+DRAW_CV_SURFACE = False
+U_DEGREE, V_DEGREE = 2, 3
+
 BASE_PROFILE_LAYER = "mattric::base"
 TRANSFORMED_PROFILE_LAYER = "mattric::transformed"
 ATTRACTOR_LAYER = "mattric::attractors"
 WALL_LAYER = "mattric::wall"
+CV_WALL_LAYER = "mattric::cv_wall"
 
 BASE_COLOR = (180, 180, 180)         # light gray - the flat, unmodified profiles
 TRANSFORMED_COLOR = (20, 90, 220)    # blue - the bulged profiles actually lofted
@@ -94,12 +105,21 @@ def main():
     attractor_ids = rb.draw_markers_live(attractor_points, radius=ATTRACTOR_MARKER_RADIUS,
                                           layer=ATTRACTOR_LAYER, zoom=False, color=ATTRACTOR_COLOR)
 
-    wall_ids = rb.loft_wall_live(transformed_curve_ids, layer=WALL_LAYER, color=WALL_COLOR)
+    wall_ids = rb.loft_wall_live(transformed_curve_ids, layer=WALL_LAYER, color=WALL_COLOR,
+                                  loft_type=LOFT_TYPE)
+
+    cv_wall_id = None
+    if DRAW_CV_SURFACE:
+        grid = rb.matrix_point_grid(transformed, COLS, ROWS)
+        cv_wall_id = rb.nurbs_surface_live(grid, u_degree=U_DEGREE, v_degree=V_DEGREE,
+                                            layer=CV_WALL_LAYER, color=WALL_COLOR)
 
     print(f"Mattric: drew {len(transformed_curve_ids)} base+transformed profile curves "
           f"({COLS} columns x {ROWS} rows each), {len(attractor_ids)} attractor markers "
           f"under '{ATTRACTOR_LAYER}', and lofted {len(wall_ids)} wall surface(s) "
-          f"under '{WALL_LAYER}'.")
+          f"under '{WALL_LAYER}'"
+          + (f"; control-point surface {'added' if cv_wall_id else 'FAILED (invalid)'} "
+             f"under '{CV_WALL_LAYER}'." if DRAW_CV_SURFACE else "."))
 
 
 if __name__ == "__main__":

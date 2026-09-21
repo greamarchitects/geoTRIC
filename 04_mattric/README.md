@@ -88,9 +88,14 @@ two-rail sweep instead of a straight loft across every column.
   wrapped rule computes).
 - `rhino_backend.py` — `cell_point` (pure geometry: origin + offset),
   `draw_profile_curves_live` / `draw_course_curves_live` (one
-  `rs.AddInterpCurve` per column / row), `loft_wall_live`
-  (`rs.AddLoft` across the profile curves), and `draw_markers_live`
-  (small circles marking attractor positions).
+  `rs.AddInterpCurve` per column / row), `loft_wall_live` (RhinoCommon
+  port of the C++ `CArgsRhinoLoft` / `RhinoSdkLoftSurface` sample:
+  `Brep.CreateFromLoft` with `LoftType.Tight`, natural ends, short
+  segments removed, results joined), `nurbs_surface_live` (RhinoCommon
+  port of the C++ `CreateSurfacesExample`: a NURBS surface built straight
+  from the matrix's control-point net, via `clamped_uniform_knots` and
+  `matrix_point_grid`), and `draw_markers_live` (small circles marking
+  attractor positions).
 - `scripts/run_in_rhino.py` — the working entrypoint: builds an 8×10 flat
   base matrix and a second copy with `three_point_bulge_rule` (wrapped in
   `constrain_bulge_rule`) applied, draws both sets of profile curves
@@ -138,8 +143,14 @@ DRAW base curves        -> layer "mattric::base"        (gray)
 DRAW transformed curves -> layer "mattric::transformed" (blue)
 DRAW attractors         -> layer "mattric::attractors"  (red circles)
 
-wall = AddLoft(transformed_curves)     # or AddSweep2(rails, transformed_curves)
+wall = Brep.CreateFromLoft(transformed_curves, LoftType.Tight)  # join if >1 brep
 DRAW wall -> layer "mattric::wall"
+
+OPTIONAL (DRAW_CV_SURFACE):
+    grid = points of `transformed` as grid[col][row]
+    surface = NurbsSurface(degree u=2, v=3, control net = grid,
+                           clamped uniform knots)
+    DRAW surface -> layer "mattric::cv_wall"   # pulled toward the points, not through them
 
 OUTPUT  one Rhino document: flat reference profiles, bulged profiles, the
         three attractor markers, and the lofted wall surface
@@ -191,8 +202,11 @@ only `rhino_backend.py` should ever import `rhinoscriptsyntax`.
 v0.1 first draft: `matrix.py`, `pattern.py`, and `rhino_backend.py` are
 implemented and wired together via `scripts/run_in_rhino.py` (see
 **Implemented so far** and **Pipeline** above), but unverified inside an
-actual Rhino session — `rhinoscriptsyntax` isn't available outside Rhino,
-so only the pure-Python matrix/pattern logic has been checked directly.
+actual Rhino session — `rhinoscriptsyntax` / RhinoCommon aren't available
+outside Rhino, so only the pure-Python parts (matrix, rules, knot vectors,
+control-point grid) have been checked directly. The RhinoCommon calls
+(`CreateFromLoft`, `NurbsSurface.Create`, `Points.SetPoint`) are ported
+from the C++ SDK samples and still need a first run in Rhino.
 `recipes/`, `docs/`, and `export.py` are still empty/not started.
 
 ## Roadmap
