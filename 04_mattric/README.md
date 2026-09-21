@@ -78,7 +78,11 @@ two-rail sweep instead of a straight loft across every column.
 **Implemented so far** (v0.1 first draft, `src/mattric/`):
 - `matrix.py` — `build_matrix` (flat 3D grid of points), `column_keys` /
   `row_keys` (ordered per-column / per-row key lists, for building
-  curves), `bounds`, `center_key`.
+  curves), `wall_extents` (the wall's x/z footprint), `build_unit_grid`
+  (a second dictionary, keyed `(i, j)`, of perforated wall units filling
+  that footprint — each with a `center`, outer `size` and `inset`; pure
+  Python, rejects an inset that would close the hole), `bounds`,
+  `center_key`.
 - `pattern.py` — `apply_rule` + rules: `radial_bulge_rule` (single
   attractor, same smoothstep falloff as skeletric/pattric),
   `three_point_bulge_rule` (the same falloff blended across three
@@ -94,8 +98,11 @@ two-rail sweep instead of a straight loft across every column.
   segments removed, results joined), `nurbs_surface_live` (RhinoCommon
   port of the C++ `CreateSurfacesExample`: a NURBS surface built straight
   from the matrix's control-point net, via `clamped_uniform_knots` and
-  `matrix_point_grid`), and `draw_markers_live` (small circles marking
-  attractor positions).
+  `matrix_point_grid`), `perforated_units_live` (one perforated wall unit
+  per unit-grid entry: outer + inset square extruded from a flat base
+  plane, boolean-differenced into a frame, then split by the wall surface
+  so each unit ends where the surface is), `set_layer_visible_live`, and
+  `draw_markers_live` (small circles marking attractor positions).
 - `scripts/run_in_rhino.py` — the working entrypoint: builds an 8×10 flat
   base matrix and a second copy with `three_point_bulge_rule` (wrapped in
   `constrain_bulge_rule`) applied, draws both sets of profile curves
@@ -144,7 +151,19 @@ DRAW transformed curves -> layer "mattric::transformed" (blue)
 DRAW attractors         -> layer "mattric::attractors"  (red circles)
 
 wall = Brep.CreateFromLoft(transformed_curves, LoftType.Tight)  # join if >1 brep
-DRAW wall -> layer "mattric::wall"
+DRAW wall -> layer "mattric::wall"      # hidden by default - it is the cutter, not the result
+
+units = build_unit_grid(wall_extents(base), unit_size, inset)   # {(i, j): centre, size, inset}
+base_y = wall.min_y - min_depth          # flat base plane, below the wall's lowest point
+top_y  = wall.max_y + 1                  # past the wall's highest point
+
+FOR EACH unit IN units:
+    outer = box(centre +/- size/2,         y: base_y .. top_y)
+    inner = box(centre +/- (size/2-inset), y: base_y-1 .. top_y+1)
+    frame = outer - inner                  # square frame, `inset` thick, hole through it
+    pieces = frame.Split(wall)             # the wall surface cuts it in two
+    unit_solid = piece nearest base_y      # base ring + outer walls + hole walls
+DRAW units -> layer "mattric::units"       # depth of each = wall height there - base_y
 
 OPTIONAL (DRAW_CV_SURFACE):
     grid = points of `transformed` as grid[col][row]
@@ -204,9 +223,12 @@ implemented and wired together via `scripts/run_in_rhino.py` (see
 **Implemented so far** and **Pipeline** above), but unverified inside an
 actual Rhino session — `rhinoscriptsyntax` / RhinoCommon aren't available
 outside Rhino, so only the pure-Python parts (matrix, rules, knot vectors,
-control-point grid) have been checked directly. The RhinoCommon calls
-(`CreateFromLoft`, `NurbsSurface.Create`, `Points.SetPoint`) are ported
-from the C++ SDK samples and still need a first run in Rhino.
+control-point grid, unit grid) have been checked directly. The RhinoCommon
+calls (`CreateFromLoft`, `NurbsSurface.Create`, `Points.SetPoint`) are
+ported from the C++ SDK samples, and the unit-building calls
+(`CreateBooleanDifference`, `Brep.Split`) are new; all still need a first
+run in Rhino. Units come out as open polysurfaces (open at the top, where
+the wall surface would sit) — no cap is built from the surface itself.
 `recipes/`, `docs/`, and `export.py` are still empty/not started.
 
 ## Roadmap

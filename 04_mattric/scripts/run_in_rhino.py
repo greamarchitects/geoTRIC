@@ -42,7 +42,7 @@ if str(SRC) not in sys.path:
 for _mod_name in [m for m in list(sys.modules) if m == "mattric" or m.startswith("mattric.")]:
     del sys.modules[_mod_name]
 
-from mattric.matrix import build_matrix
+from mattric.matrix import build_matrix, build_unit_grid, wall_extents
 from mattric.pattern import apply_rule, three_point_bulge_rule, constrain_bulge_rule
 from mattric import rhino_backend as rb
 
@@ -64,6 +64,16 @@ FALLOFF_CELLS = 3.0   # grid-cell radius of each attractor's influence
 
 LOFT_TYPE = "Tight"   # any Rhino.Geometry.LoftType member: Normal, Loose, Straight, Tight, ...
 
+# Perforated wall units: a square grid filling the wall's footprint, each
+# unit an outer square plus an inner square INSET units inside it (a frame
+# INSET thick with a hole in the middle). Both squares are extruded from a
+# flat base plane until they meet the lofted wall surface, which decides
+# how deep each unit is - so the wall is these units, not the joined surface.
+UNIT_SIZE = 10.0      # outer square side, world units
+INSET = 3.0           # inner square sits this far inside the outer one
+MIN_DEPTH = 2.0       # base plane sits this far below the wall's lowest point
+SHOW_WALL_SURFACE = False   # the loft is still built (it cuts the units) - False hides its layer
+
 # Optional second wall: a NURBS surface built straight from the matrix's
 # control-point net (port of the C++ CreateSurfacesExample) instead of
 # lofted through the profile curves. It is pulled toward the points rather
@@ -77,11 +87,13 @@ TRANSFORMED_PROFILE_LAYER = "mattric::transformed"
 ATTRACTOR_LAYER = "mattric::attractors"
 WALL_LAYER = "mattric::wall"
 CV_WALL_LAYER = "mattric::cv_wall"
+UNIT_LAYER = "mattric::units"
 
 BASE_COLOR = (180, 180, 180)         # light gray - the flat, unmodified profiles
 TRANSFORMED_COLOR = (20, 90, 220)    # blue - the bulged profiles actually lofted
 ATTRACTOR_COLOR = (220, 30, 30)      # red - the points driving the field
 WALL_COLOR = (140, 170, 220)         # pale blue - the lofted surface itself
+UNIT_COLOR = (40, 40, 40)            # charcoal - the perforated wall units
 
 
 def main():
@@ -108,6 +120,16 @@ def main():
     wall_ids = rb.loft_wall_live(transformed_curve_ids, layer=WALL_LAYER, color=WALL_COLOR,
                                   loft_type=LOFT_TYPE)
 
+    unit_ids, failed_units = [], []
+    if wall_ids:
+        unit_grid = build_unit_grid(wall_extents(base), UNIT_SIZE, INSET)
+        unit_ids, failed_units = rb.perforated_units_live(
+            unit_grid, wall_ids[0], min_depth=MIN_DEPTH, layer=UNIT_LAYER, color=UNIT_COLOR)
+        if not SHOW_WALL_SURFACE:
+            rb.set_layer_visible_live(WALL_LAYER, False)
+    else:
+        print("Mattric: loft failed - no wall surface to cut the units with.")
+
     cv_wall_id = None
     if DRAW_CV_SURFACE:
         grid = rb.matrix_point_grid(transformed, COLS, ROWS)
@@ -117,7 +139,8 @@ def main():
     print(f"Mattric: drew {len(transformed_curve_ids)} base+transformed profile curves "
           f"({COLS} columns x {ROWS} rows each), {len(attractor_ids)} attractor markers "
           f"under '{ATTRACTOR_LAYER}', and lofted {len(wall_ids)} wall surface(s) "
-          f"under '{WALL_LAYER}'"
+          f"under '{WALL_LAYER}'; built {len(unit_ids)} perforated units under '{UNIT_LAYER}'"
+          + (f" ({len(failed_units)} failed: {failed_units})" if failed_units else "")
           + (f"; control-point surface {'added' if cv_wall_id else 'FAILED (invalid)'} "
              f"under '{CV_WALL_LAYER}'." if DRAW_CV_SURFACE else "."))
 

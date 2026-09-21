@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .matrix import Cell, Matrix, column_keys, row_keys
 
@@ -230,6 +230,92 @@ def nurbs_surface_live(point_grid: List[List[Tuple[float, float, float]]],
     rs.ObjectLayer(guid, layer)
     sc.doc.Views.Redraw()
     return guid
+
+
+def _box_brep(x0: float, x1: float, y0: float, y1: float, z0: float, z1: float):
+    """World-axis-aligned box Brep - no orientation ambiguity, unlike
+    extruding a curve whose plane normal depends on its point order."""
+    box = Rhino.Geometry.Box(Rhino.Geometry.Plane.WorldXY,
+                              Rhino.Geometry.Interval(x0, x1),
+                              Rhino.Geometry.Interval(y0, y1),
+                              Rhino.Geometry.Interval(z0, z1))
+    return box.ToBrep()
+
+
+def perforated_units_live(unit_grid: Dict, wall_id, min_depth: float = 2.0,
+                           layer: str = "mattric::units",
+                           color: Optional[Tuple[int, int, int]] = None) -> Tuple[List, List]:
+    """
+    Build one perforated wall unit per entry in `unit_grid` and let the wall
+    surface decide where each one ends.
+
+    Each unit is a square frame: an outer square of side `size` and an
+    inner square `inset` inside it, both extruded along y from a flat base
+    plane up past the wall surface, then cut off where they meet the
+    surface (`wall_id`, e.g. loft_wall_live's result). Every unit therefore
+    ends on the wall's bulged shape - deep where the wall bulges out
+    toward an attractor, shallow where it stays flat.
+
+    The base plane sits `min_depth` below the wall's lowest point, so units
+    never collapse to zero depth where the wall is flat. Units come out as
+    open polysurfaces: base ring + outer walls + hole walls, open at the
+    top where the wall surface would sit.
+
+    Returns (created ids, keys of units that failed to build). Live only.
+    """
+    _require_live()
+    ensure_layer(layer, color)
+    tolerance = sc.doc.ModelAbsoluteTolerance
+
+    wall = rs.coercebrep(wall_id)
+    if wall is None:
+        raise ValueError("wall_id is not a surface/polysurface")
+    bbox = wall.GetBoundingBox(True)
+    base_y = bbox.Min.Y - min_depth
+    top_y = bbox.Max.Y + 1.0
+
+    ids, failed = [], []
+    for key in sorted(unit_grid):
+        unit = unit_grid[key]
+        cx, cz = unit["center"]
+        half_outer = unit["size"] / 2.0
+        half_inner = half_outer - unit["inset"]
+
+        outer = _box_brep(cx - half_outer, cx + half_outer, base_y, top_y,
+                          cz - half_outer, cz + half_outer)
+        # Inner box overshoots the outer one in y so the difference cuts
+        # cleanly through instead of leaving coplanar faces to resolve.
+        inner = _box_brep(cx - half_inner, cx + half_inner, base_y - 1.0, top_y + 1.0,
+                          cz - half_inner, cz + half_inner)
+        frames = Rhino.Geometry.Brep.CreateBooleanDifference(outer, inner, tolerance)
+        if not frames:
+            failed.append(key)
+            continue
+
+        pieces = frames[0].Split(wall, tolerance)
+        if not pieces:
+            failed.append(key)
+            continue
+
+        # Splitting leaves the part between base and wall plus the leftover
+        # above the wall - keep the one nearer the base plane.
+        piece = min(pieces, key=lambda p: p.GetBoundingBox(True).Center.Y)
+        guid = sc.doc.Objects.AddBrep(piece)
+        if guid == System.Guid.Empty:
+            failed.append(key)
+            continue
+        rs.ObjectLayer(guid, layer)
+        ids.append(guid)
+
+    sc.doc.Views.Redraw()
+    return ids, failed
+
+
+def set_layer_visible_live(layer: str, visible: bool) -> None:
+    """Show/hide a layer - used to keep the wall surface as the units' cutter
+    without displaying it. Live only."""
+    _require_live()
+    rs.LayerVisible(layer, visible)
 
 
 def draw_markers_live(points: List[Tuple[float, float, float]], radius: float = 1.5,

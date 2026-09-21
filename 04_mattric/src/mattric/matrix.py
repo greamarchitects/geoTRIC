@@ -56,6 +56,57 @@ def build_matrix(cols: int, rows: int, col_spacing: float = 10.0, row_height: fl
     return matrix
 
 
+UnitGrid = Dict[CellKey, Dict[str, object]]
+
+
+def wall_extents(matrix: Matrix) -> Tuple[float, float, float, float]:
+    """(x_min, z_min, x_max, z_max) of the matrix's base origins - the
+    wall's footprint in its own x/z plane (y is the depth direction)."""
+    xs = [cell["origin"][0] for cell in matrix.values()]
+    zs = [cell["origin"][2] for cell in matrix.values()]
+    return (min(xs), min(zs), max(xs), max(zs))
+
+
+def build_unit_grid(extents: Tuple[float, float, float, float], unit_size: float,
+                     inset: float) -> UnitGrid:
+    """
+    Square grid of perforated wall units filling `extents` (x_min, z_min,
+    x_max, z_max) edge to edge, centered so any leftover width/height is
+    split evenly into margins. Each unit is a dictionary, keyed (i, j) like
+    the point matrix:
+
+        units[(i, j)] = {
+            "center": (x, z),   # unit center in the wall's x/z plane
+            "size":   unit_size,  # outer square side
+            "inset":  inset,      # inner square sits `inset` inside the outer one
+        }
+
+    so the frame is `inset` thick all round and the hole is
+    (size - 2*inset) square. `inset` lives on each unit (not just a global)
+    so a later rule can vary the perforation per unit. Pure function - no Rhino.
+    """
+    if not 0.0 < inset < unit_size / 2.0:
+        raise ValueError(f"inset must be between 0 and unit_size/2 ({unit_size / 2.0}); got {inset}")
+    x0, z0, x1, z1 = extents
+    n_cols = int(((x1 - x0) + 1e-9) // unit_size)
+    n_rows = int(((z1 - z0) + 1e-9) // unit_size)
+    if n_cols < 1 or n_rows < 1:
+        raise ValueError(f"unit_size {unit_size} doesn't fit inside the wall extents {extents}")
+    margin_x = ((x1 - x0) - n_cols * unit_size) / 2.0
+    margin_z = ((z1 - z0) - n_rows * unit_size) / 2.0
+
+    units: UnitGrid = {}
+    for j in range(n_rows):
+        for i in range(n_cols):
+            units[(i, j)] = {
+                "center": (x0 + margin_x + (i + 0.5) * unit_size,
+                           z0 + margin_z + (j + 0.5) * unit_size),
+                "size": unit_size,
+                "inset": inset,
+            }
+    return units
+
+
 def column_keys(matrix: Matrix, col: int) -> List[CellKey]:
     """(col, row) keys for one column, sorted bottom to top - one vertical
     wall profile."""
