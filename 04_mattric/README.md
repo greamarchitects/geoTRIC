@@ -101,7 +101,9 @@ two-rail sweep instead of a straight loft across every column.
   `matrix_point_grid`), `perforated_units_live` (one perforated wall unit
   per unit-grid entry: outer + inset square extruded from a flat base
   plane, boolean-differenced into a frame, then split by the wall surface
-  so each unit ends where the surface is), `set_layer_visible_live`, and
+  so each unit ends where the surface is; the part of the wall inside each
+  frame is then joined on as the top, closing the unit into a solid),
+  `set_layer_visible_live`, and
   `draw_markers_live` (small circles marking attractor positions).
 - `scripts/run_in_rhino.py` — the working entrypoint: builds an 8×10 flat
   base matrix and a second copy with `three_point_bulge_rule` (wrapped in
@@ -162,7 +164,13 @@ FOR EACH unit IN units:
     inner = box(centre +/- (size/2-inset), y: base_y-1 .. top_y+1)
     frame = outer - inner                  # square frame, `inset` thick, hole through it
     pieces = frame.Split(wall)             # the wall surface cuts it in two
-    unit_solid = piece nearest base_y      # base ring + outer walls + hole walls
+    open_unit = piece nearest base_y       # base ring + outer walls + hole walls
+
+    IF cap_tops:
+        cap = wall.Split(frame)            # wall surface INTERSECTED with the frame:
+              -> keep the ring piece       #   ring, hole square, rest of wall - the ring
+                                           #   is the piece as wide as the unit
+        unit_solid = Join(open_unit, cap)  # closed polysurface, top follows the wall
 DRAW units -> layer "mattric::units"       # depth of each = wall height there - base_y
 
 OPTIONAL (DRAW_CV_SURFACE):
@@ -227,8 +235,10 @@ control-point grid, unit grid) have been checked directly. The RhinoCommon
 calls (`CreateFromLoft`, `NurbsSurface.Create`, `Points.SetPoint`) are
 ported from the C++ SDK samples, and the unit-building calls
 (`CreateBooleanDifference`, `Brep.Split`) are new; all still need a first
-run in Rhino. Units come out as open polysurfaces (open at the top, where
-the wall surface would sit) — no cap is built from the surface itself.
+run in Rhino. The top-cap step (choosing the ring piece of the split wall
+by its width, then `Brep.JoinBreps`) is the most likely to need tuning; a
+unit whose cap fails to join is left as an open polysurface and reported
+in the script's printed summary. `CAP_UNIT_TOPS = False` skips capping.
 `recipes/`, `docs/`, and `export.py` are still empty/not started.
 
 ## Roadmap

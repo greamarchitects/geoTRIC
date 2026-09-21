@@ -244,7 +244,8 @@ def _box_brep(x0: float, x1: float, y0: float, y1: float, z0: float, z1: float):
 
 def perforated_units_live(unit_grid: Dict, wall_id, min_depth: float = 2.0,
                            layer: str = "mattric::units",
-                           color: Optional[Tuple[int, int, int]] = None) -> Tuple[List, List]:
+                           color: Optional[Tuple[int, int, int]] = None,
+                           cap_tops: bool = True) -> Tuple[List, List, List]:
     """
     Build one perforated wall unit per entry in `unit_grid` and let the wall
     surface decide where each one ends.
@@ -257,11 +258,16 @@ def perforated_units_live(unit_grid: Dict, wall_id, min_depth: float = 2.0,
     toward an attractor, shallow where it stays flat.
 
     The base plane sits `min_depth` below the wall's lowest point, so units
-    never collapse to zero depth where the wall is flat. Units come out as
-    open polysurfaces: base ring + outer walls + hole walls, open at the
-    top where the wall surface would sit.
+    never collapse to zero depth where the wall is flat. Without capping a
+    unit is an open polysurface: base ring + outer walls + hole walls.
 
-    Returns (created ids, keys of units that failed to build). Live only.
+    With `cap_tops`, the part of the wall surface lying inside each unit
+    (the wall intersected with the unit's frame - a square ring following
+    the wall's curvature) is joined on as the top, closing the unit into a
+    solid polysurface.
+
+    Returns (created ids, keys of units that failed to build, keys of units
+    that built but could not be capped and stayed open). Live only.
     """
     _require_live()
     ensure_layer(layer, color)
@@ -274,7 +280,7 @@ def perforated_units_live(unit_grid: Dict, wall_id, min_depth: float = 2.0,
     base_y = bbox.Min.Y - min_depth
     top_y = bbox.Max.Y + 1.0
 
-    ids, failed = [], []
+    ids, failed, uncapped = [], [], []
     for key in sorted(unit_grid):
         unit = unit_grid[key]
         cx, cz = unit["center"]
@@ -300,6 +306,17 @@ def perforated_units_live(unit_grid: Dict, wall_id, min_depth: float = 2.0,
         # Splitting leaves the part between base and wall plus the leftover
         # above the wall - keep the one nearer the base plane.
         piece = min(pieces, key=lambda p: p.GetBoundingBox(True).Center.Y)
+
+        if cap_tops and not piece.IsSolid:
+            top = _wall_cap(wall, frames[0], unit["size"], tolerance)
+            joined = Rhino.Geometry.Brep.JoinBreps([piece, top], tolerance) if top else None
+            if joined and len(joined) == 1 and joined[0].IsSolid:
+                piece = joined[0]
+                if piece.SolidOrientation == Rhino.Geometry.BrepSolidOrientation.Inward:
+                    piece.Flip()
+            else:
+                uncapped.append(key)
+
         guid = sc.doc.Objects.AddBrep(piece)
         if guid == System.Guid.Empty:
             failed.append(key)
@@ -308,7 +325,28 @@ def perforated_units_live(unit_grid: Dict, wall_id, min_depth: float = 2.0,
         ids.append(guid)
 
     sc.doc.Views.Redraw()
-    return ids, failed
+    return ids, failed, uncapped
+
+
+def _wall_cap(wall, frame, unit_size: float, tolerance: float):
+    """
+    The part of the wall surface that lies inside `frame` (a square ring
+    solid) - i.e. the surface intersected with the polysurface - or None.
+
+    Splitting the wall by the frame gives three kinds of piece: the ring
+    inside the frame, the square inside the frame's hole, and the rest of
+    the wall outside it. Only the ring spans the full outer footprint, so
+    that is the piece whose x and z widths both match `unit_size`.
+    """
+    pieces = wall.Split(frame, tolerance)
+    if not pieces:
+        return None
+
+    def mismatch(piece):
+        box = piece.GetBoundingBox(True)
+        return abs((box.Max.X - box.Min.X) - unit_size) + abs((box.Max.Z - box.Min.Z) - unit_size)
+
+    return min(pieces, key=mismatch)
 
 
 def set_layer_visible_live(layer: str, visible: bool) -> None:

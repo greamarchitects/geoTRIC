@@ -72,6 +72,7 @@ LOFT_TYPE = "Tight"   # any Rhino.Geometry.LoftType member: Normal, Loose, Strai
 UNIT_SIZE = 10.0      # outer square side, world units
 INSET = 3.0           # inner square sits this far inside the outer one
 MIN_DEPTH = 2.0       # base plane sits this far below the wall's lowest point
+CAP_UNIT_TOPS = True  # join the part of the wall surface inside each unit on as its top (closed solid)
 SHOW_WALL_SURFACE = False   # the loft is still built (it cuts the units) - False hides its layer
 
 # Optional second wall: a NURBS surface built straight from the matrix's
@@ -120,11 +121,12 @@ def main():
     wall_ids = rb.loft_wall_live(transformed_curve_ids, layer=WALL_LAYER, color=WALL_COLOR,
                                   loft_type=LOFT_TYPE)
 
-    unit_ids, failed_units = [], []
+    unit_ids, failed_units, uncapped_units = [], [], []
     if wall_ids:
         unit_grid = build_unit_grid(wall_extents(base), UNIT_SIZE, INSET)
-        unit_ids, failed_units = rb.perforated_units_live(
-            unit_grid, wall_ids[0], min_depth=MIN_DEPTH, layer=UNIT_LAYER, color=UNIT_COLOR)
+        unit_ids, failed_units, uncapped_units = rb.perforated_units_live(
+            unit_grid, wall_ids[0], min_depth=MIN_DEPTH, layer=UNIT_LAYER, color=UNIT_COLOR,
+            cap_tops=CAP_UNIT_TOPS)
         if not SHOW_WALL_SURFACE:
             rb.set_layer_visible_live(WALL_LAYER, False)
     else:
@@ -141,6 +143,7 @@ def main():
           f"under '{ATTRACTOR_LAYER}', and lofted {len(wall_ids)} wall surface(s) "
           f"under '{WALL_LAYER}'; built {len(unit_ids)} perforated units under '{UNIT_LAYER}'"
           + (f" ({len(failed_units)} failed: {failed_units})" if failed_units else "")
+          + (f" ({len(uncapped_units)} left open, top cap failed: {uncapped_units})" if uncapped_units else "")
           + (f"; control-point surface {'added' if cv_wall_id else 'FAILED (invalid)'} "
              f"under '{CV_WALL_LAYER}'." if DRAW_CV_SURFACE else "."))
 
