@@ -194,9 +194,12 @@ START to END over n steps (`build_states`).
   bare *skin* surface for sampling plus the *body*: a copy with top and
   bottom capped into a closed polysurface), `surface_sampler`, `module_polysurface` (the
   module as a closed polysurface built from lofts), `draw_module`,
-  `draw_wall_unit` (box minus box, intersected with the tower body, layered and
-  colored), `set_layer_visible`, `draw_attractors`, `set_view`, `ensure_layer`,
-  `delete_object`.
+  `draw_wall_unit` (box minus box, intersected with the tower body; if the
+  boolean returns more than one fragment the largest by bounding-box
+  diagonal is kept and the rest discarded, and a kept piece far smaller than
+  the outer box is rejected as degenerate rather than silently accepted),
+  `bbox_diagonal`, `set_layer_visible`, `draw_attractors`, `set_view`,
+  `ensure_layer`, `delete_object`.
 - `scripts/run_in_rhino.py` — the entrypoint: the configuration (`QUALITY`
   presets, `START` / `END` parameter dictionaries) and the pipeline
   (`attempt`, `build_state`, `main`): the states, START -> END, laid out in a
@@ -330,6 +333,34 @@ Rendering / IO layer:
 Only `rhino_backend.py` imports `rhinoscriptsyntax`. Everything else takes
 and returns plain tuples, lists and dictionaries, so the whole
 computational layer runs (and is tested) outside Rhino.
+
+------------------------------------------------------------------------
+
+## If the wall doesn't show
+
+`draw_wall_unit`'s booleans can go wrong in Rhino in ways that don't raise an
+error and don't get reported as a failure count either: `BooleanIntersection`
+can return more than one fragment (a sliver alongside the real piece), or a
+single fragment that is technically non-null but nearly zero-sized - the call
+"succeeds" while producing nothing worth looking at. Both are now guarded
+against (the largest fragment is kept, a too-small one is rejected and
+counted as a failure), but if the wall still isn't appearing:
+
+- Run `scripts/debug_one_wall_unit.py` instead of `run_in_rhino.py`. It
+  builds one tower and tries exactly one wall unit, printing each step - box
+  sizes, whether each boolean returned anything, how many fragments and how
+  big each one was - so it names the exact step that fails or produces a
+  degenerate result, on your machine and your Rhino version. Set `WALL_KEY`
+  in it to check a cell elsewhere on the tower (e.g. near the top, where
+  twist and taper are strongest) if the middle cell is fine.
+- Check the run's own summary line - `built N of N states in ... (K wall
+  unit errors)` - and the first `Hiritric: first wall unit error - ...` line
+  above it, which names the exception.
+- If every wall unit is reported as failed, `SHOW_TOWER_BODY` is overridden
+  and the plain tower body is left visible instead of nothing - so "a plain
+  closed tower shows up but no perforations" points at the boolean step,
+  while "nothing shows up at all" points further back, at the loft/cap step
+  (`draw_tower`, see `closed` in the printed output).
 
 ------------------------------------------------------------------------
 

@@ -4,6 +4,8 @@
 # `sampler(u, v)` callable for matrix.py, and draws modules, attractor
 # markers and the view. Live-only for this first draft.
 
+import math
+
 from .module import module_mesh
 from .vec import dot
 
@@ -217,6 +219,7 @@ def draw_module(cell, layer, color=None, as_polysurface=True):
     previews with many modules. Returns the new object id, or None.
     """
     require_rhino()
+    ensure_layer(layer)   # color is per-object below, not the layer's own color
     vertices, faces = module_mesh(cell)
     if as_polysurface:
         guid = module_polysurface(vertices)
@@ -229,7 +232,19 @@ def draw_module(cell, layer, color=None, as_polysurface=True):
     return guid
 
 
-def draw_wall_unit(outer_corners, inner_corners, body_id, layer, color=None):
+def bbox_diagonal(guid):
+    """Length of the diagonal of `guid`'s world axis-aligned bounding box, or
+    0.0 if it has none (a degenerate/empty result)."""
+    require_rhino()
+    corners = rs.BoundingBox(guid)
+    if not corners:
+        return 0.0
+    lo, hi = corners[0], corners[6]
+    return math.sqrt((hi.X - lo.X) ** 2 + (hi.Y - lo.Y) ** 2 + (hi.Z - lo.Z) ** 2)
+
+
+def draw_wall_unit(outer_corners, inner_corners, body_id, layer, color=None,
+                    min_diag_ratio=0.2):
     """
     One closed wall unit, the way mattric builds them: a box (`outer_corners`)
     minus a smaller box (`inner_corners`) leaves a frame with an opening, and
@@ -237,14 +252,27 @@ def draw_wall_unit(outer_corners, inner_corners, body_id, layer, color=None):
     inside the tower - its outer face becomes a piece of the tower surface,
     so the unit ends exactly where the surface is and comes out a closed
     polysurface. `body_id` is left untouched, ready for the next unit.
-    Returns the new object id, or None if a boolean fails.
+
+    A boolean can return more than one fragment (e.g. a stray sliver
+    alongside the real piece); the largest by bounding-box diagonal is kept,
+    the rest deleted - picking index 0 blindly risks keeping a sliver and
+    losing the actual unit. The kept piece is also checked against the outer
+    box's own diagonal: if it is smaller than `min_diag_ratio` of that (a
+    near-degenerate result - the boolean "succeeded" but produced almost
+    nothing), it is rejected as a failure instead of left invisible on
+    screen while still counting as built.
+
+    Returns the new object id, or None if a boolean fails or its result is
+    rejected as degenerate.
     """
     require_rhino()
+    ensure_layer(layer)   # color is per-object below, not the layer's own color
     outer = rs.AddBox(outer_corners)
     inner = rs.AddBox(inner_corners)
     if not (outer and inner):
         rs.DeleteObjects([g for g in (outer, inner) if g])
         return None
+    outer_diag = bbox_diagonal(outer)
     frame = rs.BooleanDifference([outer], [inner], delete_input=True)
     if not frame:
         rs.DeleteObjects([outer, inner])
@@ -253,8 +281,11 @@ def draw_wall_unit(outer_corners, inner_corners, body_id, layer, color=None):
     rs.DeleteObjects(frame)
     if not units:
         return None
-    guid = units[0]
-    rs.DeleteObjects(units[1:])
+    guid = max(units, key=bbox_diagonal)
+    rs.DeleteObjects([u for u in units if u != guid])
+    if outer_diag > 0 and bbox_diagonal(guid) < min_diag_ratio * outer_diag:
+        rs.DeleteObject(guid)
+        return None
     rs.ObjectLayer(guid, layer)
     if color is not None:
         rs.ObjectColor(guid, color)
