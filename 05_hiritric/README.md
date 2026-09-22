@@ -96,18 +96,38 @@ Design logic — what the module varies, and why:
 | color               | cool end of the gradient   | warm end                 |
 
 16 vertices in four rings (base outer / base inner / top outer / top inner)
-and 16 quad faces make a closed solid with one hole through it. The modules
+and 16 quad faces make a closed solid with one hole through it. Every face is
+a trapezoid or rectangle by construction (base and top rings share the same
+axes, only scaled and translated), so each one is exactly flat. The modules
 are built from a single definition (`module_mesh`) and drawn as
-either a closed polysurface built from lofts (default) or, for quick
-previews, a mesh.
+either a closed polysurface - one flat surface per face, joined, see
+`module_polysurface` - (default) or, for quick previews, a mesh.
 
 ------------------------------------------------------------------------
 
 ## The wall
 
 The tower's wall is not the bare surface: it is a set of **perforated wall
-units**, one per cell, `WALL_FLOORS` rings of `WALL_COLS` units (a row of the
-matrix is one floor). They are mattric's units, rebuilt on a curved tower:
+units** — window-wall panels — one per cell, `WALL_COLS` units around the
+tower x one ring per **floor-to-floor band**. The ring count is not a free
+setting: `build_state` derives it as `int(params["floors"]) - 1`, so a row of
+wall units always sits in the surface *between two floors*, not on an
+unrelated finer grid. `tower_floor_points` places control floor `f` at
+`v = f/(floors-1)`, evenly spaced, so band `b` (of `floors-1` bands) samples
+`v = (b+0.5)/(floors-1)` - exactly the midpoint between floor `b` and floor
+`b+1` (confirmed to floating-point precision, not just by construction).
+
+Because the tower is round, the grid has to close on itself with no seam gap
+or overlap - `build_matrix`'s neighbor lookup wraps with `(col+1) % cols`, so
+the last column measures its width back to column 0 the same way every other
+column measures to its neighbor (confirmed: last-column `cell_w` matches
+every other column's, to floating-point precision, on a circular test
+surface). Each unit is built on its own cell's local (tangent, up, normal)
+frame rather than world axes, so it follows the tower's curvature and twist
+at that point automatically - the same units work whether the tower is a
+plain cylinder or an aggressively twisted, tapered superellipse.
+
+They are mattric's perforated units, rebuilt on a curved tower:
 
     mattric (flat wall, world axes)         hiritric (tower, each cell's own frame)
     outer box - inner box (inset)           outer box - inner box (inset), in the
@@ -192,7 +212,11 @@ START to END over n steps (`build_states`).
   Loose, then Straight loft), `close_body` (`CapPlanarHoles`, else manual
   planar caps joined on), `draw_tower` (lofts the floor curves; returns the
   bare *skin* surface for sampling plus the *body*: a copy with top and
-  bottom capped into a closed polysurface), `surface_sampler`, `module_polysurface` (the
+  bottom capped into a closed polysurface), `module_polysurface` (the module
+  as one flat `rs.AddSrfPt` surface per `module_mesh` face, joined - each
+  face is a trapezoid/rectangle by construction, confirmed planar to ~1e-14
+  world units across a realistic field, so no curve/loft correspondence is
+  ever guessed), `surface_sampler`, `module_polysurface` (the
   module as a closed polysurface built from lofts), `draw_module`,
   `draw_wall_unit` (box minus box, intersected with the tower body; if the
   boolean returns more than one fragment the largest by bounding-box
@@ -336,6 +360,62 @@ computational layer runs (and is tested) outside Rhino.
 
 ------------------------------------------------------------------------
 
+## If the field looks flat
+
+`attractor_tower_rule` was audited directly (outside Rhino, against an
+analytic superellipse tower matching `tower_floor_points`' taper/twist/bulge,
+432 cells, 3 states from START through END): in every case a cell closer to
+an attractor always scored equal-or-higher influence than a farther one,
+tilt never exceeded `max_tilt`, depth stayed in range, and voids only
+appeared below `void_below`. The rule's math is correct.
+
+What wasn't correct was the tuning: `falloff` (the world-unit radius of
+influence around each attractor) was 34-42, far too small for the tower's
+actual size - about 126 units around, 120-150 tall - covered by only 3
+attractors. The result: three quarters of the tower sat at influence < 0.3,
+reading as "the rule does nothing" even though it was working exactly as
+written. `falloff` is now 55 (START) and 65 (END), which gives a real spread
+(median influence ~0.5-0.6, not saturated) across most of the tower instead
+of a few isolated hot spots on an otherwise flat field - the same kind of
+fix as pattric's "make the transformation recognizable" tuning pass.
+
+If the field still looks too subtle or too strong after this, `falloff` in
+`START`/`END` is the one number to move first - print `cell["influence"]`
+statistics for your own tower/attractor layout (see the audit method above)
+rather than guessing, since the right value scales with the tower's actual
+size, not a fixed constant.
+
+------------------------------------------------------------------------
+
+## If a module doesn't show
+
+The louver module used to be built the same failure-prone way as the wall -
+lofting between two curves and cutting a planar surface with a hole - and
+worse, a silent failure there was never even reported: `draw_module`
+returning `None` doesn't raise an exception, and the pipeline's `attempt()`
+wrapper only catches exceptions, so every module could fail with the summary
+still just reading `0 modules, 0 voids` and no explanation at all.
+
+Both are fixed now:
+- `module_polysurface` builds each of `module_mesh`'s 16 faces directly as a
+  flat `rs.AddSrfPt` surface, then joins them - no curve is ever built for a
+  module and no loft/`AddPlanarSrf` correspondence is guessed. Every face is
+  confirmed exactly planar (a frustum's side/top/base faces are trapezoids
+  or rectangles by construction - a pure-Python check across a realistic
+  432-cell field found a worst-case deviation of 1.8e-14 world units), so
+  `AddSrfPt` always has flat, unambiguous geometry to work with.
+- If it still fails, `build_state` now reports it explicitly - `"N of M
+  louver modules failed to build"` - the same way the wall already did,
+  instead of the previous silent `0 modules`.
+
+If modules still don't show after this, the printed count is now the thing
+to look at: `"N of M louver modules failed"` (a construction problem worth a
+bug report with the printed message) versus a plain `0 modules, 0 voids`
+with no failures reported (every cell was a void - check `void_chance` and
+`void_below` in the rule for that state).
+
+------------------------------------------------------------------------
+
 ## If the wall doesn't show
 
 `draw_wall_unit`'s booleans can go wrong in Rhino in ways that don't raise an
@@ -407,17 +487,20 @@ actual Rhino session**: the Rhino calls (`AddInterpCurve` with periodic
 knot style 3, `AddLoft`, `CapPlanarHoles`, `AddPlanarSrf`, `JoinSurfaces`, `AddBox`, `EnableRedraw`,
 `SurfaceFrame`, `ViewDisplayMode`) still need a first run. The whole Rhino
 path has been run against a mock of `rhinoscriptsyntax`, which checks the
-control flow: two capped tower bodies, 192 wall units and hundreds of
-module polysurfaces per state end up layered and colored, no temporary
-curves/lofts/boxes leak, a failed floor curve falls back to a polyline, and
-a failed loft, cap, box subtraction or intersection is reported instead of
-silently drawing nothing. The wall-unit *geometry* is checked directly: each
-box is right-handed, the outer box fills its patch, the opening sits inside
-it and overshoots both ends. What only Rhino can confirm is the booleans
-themselves (`BooleanDifference`, `BooleanIntersection` on the curved body) —
-the most likely place to need tuning; wall units also cost one boolean each
-(192 per state), so lower `WALL_COLS`/`WALL_FLOORS` while iterating. Expect to tune the defaults by eye once modules
-are on screen.
+control flow: two capped tower bodies, wall units (`WALL_COLS x
+(floors - 1)` per state - 84 at the `final` preset's 12 columns and 8
+floors) and hundreds of module polysurfaces end up layered and colored, no
+temporary curves/lofts/boxes leak, a failed floor curve falls back to a
+polyline, and a failed loft, cap, box subtraction or intersection is
+reported instead of silently drawing nothing. The wall-unit *geometry* is
+checked directly: each box is right-handed, the outer box fills its patch,
+the opening sits inside it and overshoots both ends, wall rows sample
+exactly the midpoint between two floor curves, and the circular seam has no
+gap or overlap. What only Rhino can confirm is the booleans themselves
+(`BooleanDifference`, `BooleanIntersection` on the curved body) — the most
+likely place to need tuning; each wall unit costs one boolean, so lower
+`WALL_COLS` or `floors` while iterating. Expect to tune the defaults by eye
+once modules are on screen.
 
 ## Roadmap
 

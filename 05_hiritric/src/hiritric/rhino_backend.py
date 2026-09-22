@@ -184,28 +184,24 @@ def surface_sampler(surface_id, center_xy):
     return sampler
 
 
-def module_polysurface(vertices):
+def module_polysurface(vertices, faces):
     """
-    The module as a closed polysurface, built from lofts: the outer and the
-    inner wall are each a straight loft between a base ring and a tip ring
-    (four faces apiece), the top and base rings are planar surfaces with the
-    opening cut out, and the four are joined. `vertices` is module_mesh's
-    (base outer, base inner, top outer, top inner). Returns the id or None.
+    The module as a closed polysurface, built directly from module_mesh's own
+    16 quad faces - one flat rs.AddSrfPt surface per face, then joined.
+
+    Each face (outer/inner wall, top/base ring) is a trapezoid or rectangle
+    by construction: base and top rings share the same (a, b) axes, only
+    scaled and translated, so opposite edges of every face stay parallel and
+    all 4 corners land in one plane (confirmed to ~1e-14 world units across a
+    full attractor field - see the planarity check this was verified with).
+    AddSrfPt needs no curve correspondence to guess, unlike the earlier
+    loft-through-curves version - each face is unambiguous, flat geometry.
+
+    Returns the id, or None if any face or the final join fails.
     """
-    rings = [vertices[0:4], vertices[4:8], vertices[8:12], vertices[12:16]]
-    base_outer, base_inner, top_outer, top_inner = [
-        rs.AddPolyline(list(ring) + [ring[0]]) for ring in rings]
-
-    outer_wall = rs.AddLoft([base_outer, top_outer], loft_type=2) or []
-    inner_wall = rs.AddLoft([base_inner, top_inner], loft_type=2) or []
-    top_ring = rs.AddPlanarSrf([top_outer, top_inner]) or []
-    base_ring = rs.AddPlanarSrf([base_outer, base_inner]) or []
-    rs.DeleteObjects([base_outer, base_inner, top_outer, top_inner])
-
-    pieces = [outer_wall, inner_wall, top_ring, base_ring]
-    parts = [guid for piece in pieces for guid in piece]
-    if not all(pieces):
-        rs.DeleteObjects(parts)
+    parts = [rs.AddSrfPt([vertices[i] for i in face]) for face in faces]
+    if not all(parts):
+        rs.DeleteObjects([p for p in parts if p])
         return None
     joined = rs.JoinSurfaces(parts, delete_input=True)
     return joined[0] if joined else None
@@ -214,15 +210,16 @@ def module_polysurface(vertices):
 def draw_module(cell, layer, color=None, as_polysurface=True):
     """
     Draw one module (module_mesh) at `cell`, colored `color`. As a closed
-    polysurface built from lofts (module_polysurface) by default; or, with
-    `as_polysurface=False`, a single 16-quad mesh - much faster, for quick
-    previews with many modules. Returns the new object id, or None.
+    polysurface built from its own flat faces (module_polysurface) by
+    default; or, with `as_polysurface=False`, a single 16-quad mesh - much
+    faster, for quick previews with many modules. Returns the new object id,
+    or None.
     """
     require_rhino()
     ensure_layer(layer)   # color is per-object below, not the layer's own color
     vertices, faces = module_mesh(cell)
     if as_polysurface:
-        guid = module_polysurface(vertices)
+        guid = module_polysurface(vertices, faces)
     else:
         guid = rs.AddMesh(vertices, faces)
     if guid:

@@ -23,24 +23,32 @@ from collections import Counter
 # finishes quickly and shows the shape; switch to "final" for the full one.
 QUALITY = "draft"
 PRESETS = {
-    "draft": {"N_STATES": 3, "COLS": 12, "ROWS": 16, "WALL_COLS": 8, "WALL_FLOORS": 10,
-              "AS_POLYSURFACE": False},
-    "final": {"N_STATES": 5, "COLS": 18, "ROWS": 24, "WALL_COLS": 12, "WALL_FLOORS": 16,
-              "AS_POLYSURFACE": True},
+    "draft": {"N_STATES": 3, "COLS": 12, "ROWS": 16, "WALL_COLS": 8, "AS_POLYSURFACE": False},
+    "final": {"N_STATES": 5, "COLS": 18, "ROWS": 24, "WALL_COLS": 12, "AS_POLYSURFACE": True},
 }
 N_STATES = PRESETS[QUALITY]["N_STATES"]
 COLS, ROWS = PRESETS[QUALITY]["COLS"], PRESETS[QUALITY]["ROWS"]   # louver modules around x up the tower
 WALL_COLS = PRESETS[QUALITY]["WALL_COLS"]                          # wall units around the tower
-WALL_FLOORS = PRESETS[QUALITY]["WALL_FLOORS"]                      # floors = rings of wall units
 AS_POLYSURFACE = PRESETS[QUALITY]["AS_POLYSURFACE"]   # louvers as closed lofted polysurfaces; False = meshes, ~10x faster
 STATE_SPACING = 90.0        # world units between towers in the row
 SEED = 0
 GRADIENT = "ember"          # louver modules' color: key into GRADIENTS (color.py)
 
-# The wall: one perforated unit per cell, WALL_FLOORS rings of WALL_COLS units.
+# The wall: one perforated unit per cell, WALL_COLS units around the tower x
+# one ring per floor-to-floor band. The ring count is NOT a free setting - it
+# is derived from params["floors"] in build_state (int(floors) - 1), so a row
+# of wall units always sits in the surface *between two floors*, centered at
+# the midpoint of that band (tower_floor_points places control floor f at
+# v = f/(floors-1), evenly spaced, so band b of floors-1 sits at
+# v = (b+0.5)/(floors-1) - exactly halfway between floor b and floor b+1).
 # Each unit is a frame with an opening (mattric's perforated unit) cut off by
 # the tower body, so it is a closed polysurface whose outer face is a piece of
-# the tower surface. Openings widen near attractors (the rule's inset_ratio).
+# the tower surface, and it is built on the cell's own local tangent/normal
+# frame (not world axes), so it follows the tower's curvature and twist at
+# that point - it stays correct on a round tower, corner cases included: the
+# grid wraps at the seam (build_matrix's neighbor lookup is `(col+1) % cols`),
+# so the last column measures back to column 0 with no gap or overlap.
+# Openings widen near attractors (the rule's inset_ratio).
 BUILD_WALL_UNITS = True
 WALL_FILL = 0.96            # unit size / its cell; < 1 leaves a thin seam between units
 WALL_GRADIENT = "slate"     # wall units' color, by attractor influence
@@ -61,8 +69,13 @@ START = {
     "taper": 1.0, "bulge": 0.0, "twist": 0.0,
     # attractors (x, y, z) relative to the tower origin - just off the facade
     "attractors": [(26.0, 0.0, 25.0), (-8.0, 26.0, 60.0), (0.0, -26.0, 95.0)],
-    # field rule
-    "falloff": 34.0, "max_tilt": 25.0, "max_depth": 4.0, "void_chance": 0.0,
+    # field rule - falloff is a world-unit radius of influence around each
+    # attractor; 55 gives a real spread of influence across the tower (median
+    # ~0.5, not saturated) for a ~126-unit circumference, 120-unit-tall tower
+    # with only 3 attractors - much smaller (e.g. 34) leaves 3/4 of the tower
+    # at influence < 0.3, reading as "the rule does nothing" even though the
+    # math is correct - see the "If the field looks flat" note below.
+    "falloff": 55.0, "max_tilt": 25.0, "max_depth": 4.0, "void_chance": 0.0,
     # wall units: how far in from the tower surface they reach
     "wall_thickness": 1.2,
 }
@@ -72,7 +85,7 @@ END = {
     "squareness": 4.5,
     "taper": 0.55, "bulge": 0.12, "twist": 100.0,
     "attractors": [(26.0, 0.0, 120.0), (-8.0, 26.0, 70.0), (0.0, -26.0, 30.0)],
-    "falloff": 42.0, "max_tilt": 65.0, "max_depth": 9.0, "void_chance": 0.35,
+    "falloff": 65.0, "max_tilt": 65.0, "max_depth": 9.0, "void_chance": 0.35,
     "wall_thickness": 2.4,
 }
 
@@ -741,28 +754,24 @@ def surface_sampler(surface_id, center_xy):
     return sampler
 
 
-def module_polysurface(vertices):
+def module_polysurface(vertices, faces):
     """
-    The module as a closed polysurface, built from lofts: the outer and the
-    inner wall are each a straight loft between a base ring and a tip ring
-    (four faces apiece), the top and base rings are planar surfaces with the
-    opening cut out, and the four are joined. `vertices` is module_mesh's
-    (base outer, base inner, top outer, top inner). Returns the id or None.
+    The module as a closed polysurface, built directly from module_mesh's own
+    16 quad faces - one flat rs.AddSrfPt surface per face, then joined.
+
+    Each face (outer/inner wall, top/base ring) is a trapezoid or rectangle
+    by construction: base and top rings share the same (a, b) axes, only
+    scaled and translated, so opposite edges of every face stay parallel and
+    all 4 corners land in one plane (confirmed to ~1e-14 world units across a
+    full attractor field - see the planarity check this was verified with).
+    AddSrfPt needs no curve correspondence to guess, unlike the earlier
+    loft-through-curves version - each face is unambiguous, flat geometry.
+
+    Returns the id, or None if any face or the final join fails.
     """
-    rings = [vertices[0:4], vertices[4:8], vertices[8:12], vertices[12:16]]
-    base_outer, base_inner, top_outer, top_inner = [
-        rs.AddPolyline(list(ring) + [ring[0]]) for ring in rings]
-
-    outer_wall = rs.AddLoft([base_outer, top_outer], loft_type=2) or []
-    inner_wall = rs.AddLoft([base_inner, top_inner], loft_type=2) or []
-    top_ring = rs.AddPlanarSrf([top_outer, top_inner]) or []
-    base_ring = rs.AddPlanarSrf([base_outer, base_inner]) or []
-    rs.DeleteObjects([base_outer, base_inner, top_outer, top_inner])
-
-    pieces = [outer_wall, inner_wall, top_ring, base_ring]
-    parts = [guid for piece in pieces for guid in piece]
-    if not all(pieces):
-        rs.DeleteObjects(parts)
+    parts = [rs.AddSrfPt([vertices[i] for i in face]) for face in faces]
+    if not all(parts):
+        rs.DeleteObjects([p for p in parts if p])
         return None
     joined = rs.JoinSurfaces(parts, delete_input=True)
     return joined[0] if joined else None
@@ -771,15 +780,16 @@ def module_polysurface(vertices):
 def draw_module(cell, layer, color=None, as_polysurface=True):
     """
     Draw one module (module_mesh) at `cell`, colored `color`. As a closed
-    polysurface built from lofts (module_polysurface) by default; or, with
-    `as_polysurface=False`, a single 16-quad mesh - much faster, for quick
-    previews with many modules. Returns the new object id, or None.
+    polysurface built from its own flat faces (module_polysurface) by
+    default; or, with `as_polysurface=False`, a single 16-quad mesh - much
+    faster, for quick previews with many modules. Returns the new object id,
+    or None.
     """
     require_rhino()
     ensure_layer(layer)   # color is per-object below, not the layer's own color
     vertices, faces = module_mesh(cell)
     if as_polysurface:
-        guid = module_polysurface(vertices)
+        guid = module_polysurface(vertices, faces)
     else:
         guid = rs.AddMesh(vertices, faces)
     if guid:
@@ -917,10 +927,14 @@ def build_state(index, params, origin, errors):
         print(tag + " - tower body is not closed (cap failed); no wall units can be cut.")
 
     # 2. surface -> two matrix dictionaries, sampled in (U, V): one cell per
-    #    wall unit (a floor = a row), one per louver module
+    #    wall unit, one per louver module. wall_floors is the number of
+    #    floor-to-floor bands (floors - 1), NOT an independent setting - so
+    #    each row of wall units sits in the surface between two floors,
+    #    centered on that band's midpoint (see the CONFIG comment above).
     progress(tag + " - sampling the surface...", echo=False)
     sampler = surface_sampler(skin, (origin[0], origin[1]))
-    wall_matrix = build_matrix(WALL_COLS, WALL_FLOORS, sampler, seed=SEED)
+    wall_floors = max(2, int(params["floors"]) - 1)  # build_matrix needs >= 2 rows
+    wall_matrix = build_matrix(WALL_COLS, wall_floors, sampler, seed=SEED)
     matrix = build_matrix(COLS, ROWS, sampler, seed=SEED)
     delete_object(skin)
 
@@ -952,16 +966,21 @@ def build_state(index, params, origin, errors):
 
     # 5. one louver module per active cell, colored along the gradient
     stops = GRADIENTS[GRADIENT]
-    drawn = voids = 0
+    active_count = drawn = voids = 0
     for n, key in enumerate(sorted(matrix), 1):
         progress("%s - louver module %d/%d" % (tag, n, len(matrix)), echo=False)
         cell = matrix[key]
         if not cell["active"]:
             voids += 1
             continue
+        active_count += 1
         module = attempt(errors, "louver module", draw_module, cell, layer + "::modules",
                          gradient(cell["color_t"], stops), AS_POLYSURFACE)
         drawn += module is not None
+    if drawn < active_count:
+        print("%s - %d of %d louver modules failed to build (silently, not an exception - "
+              "draw_module/module_polysurface returned None)."
+              % (tag, active_count - drawn, active_count))
 
     attempt(errors, "attractor marker", draw_attractors, attractors, ATTRACTOR_RADIUS,
             layer + "::attractors", ATTRACTOR_COLOR)
@@ -973,8 +992,10 @@ def main():
     errors = Counter()
     states = build_states(START, END, N_STATES)
     built = 0
-    print("Hiritric: %d states, quality '%s' (%d wall units and %d louver cells per state)."
-          % (len(states), QUALITY, WALL_COLS * WALL_FLOORS, COLS * ROWS))
+    wall_floors_0 = max(2, int(states[0]["floors"]) - 1)
+    print("Hiritric: %d states, quality '%s' (%d wall units and %d louver cells per state, "
+          "%d floor-to-floor wall rings)."
+          % (len(states), QUALITY, WALL_COLS * wall_floors_0, COLS * ROWS, wall_floors_0))
 
     redraw_off()        # no viewport redraw per object - the difference between seconds and minutes
     try:
