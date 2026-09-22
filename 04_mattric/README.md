@@ -25,6 +25,11 @@ and [pattric](../03_pattric):
 - **mattric** — pattric's dictionary-indexed matrix, one dimension up:
   each column of 3D points becomes a NURBS profile curve, and the set of
   profile curves is lofted/swept into a wall *surface*.
+- **hiritric** — the next and final step: the wall becomes a tower
+  envelope and the matrix is *sampled from* the surface (points and
+  normals in (U, V) space), with attractors tilting the normals and a
+  designed module, a relative of mattric's perforated frame, standing along
+  them. See [hiritric](../05_hiritric).
 
 The per-cell attractor-falloff idea from pattric/skeletric carries over
 directly: a rule reads a cell's grid position, measures its distance to
